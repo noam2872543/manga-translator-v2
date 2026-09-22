@@ -1,0 +1,164 @@
+# =====================================================================
+# build-windows.yml
+# Builds a standalone MangaTranslator.exe in the cloud (Windows runner).
+#
+# All path discovery + argv construction happens in build_helper.py (Python),
+# which sidesteps every Windows CMD quoting trap.  The workflow just:
+#   1. installs deps,
+#   2. pre-downloads + caches the EasyOCR / manga-ocr models,
+#   3. runs build_helper.py via build_windows.bat (shell: cmd).
+#
+# How to use:
+#   1. Push this project to a public GitHub repo.
+#   2. Actions tab -> "Build Windows .exe" -> Run workflow -> pick mode.
+#   3. Wait ~15-20 min (full) / ~3 min (lite).
+#   4. Download the artifact MangaTranslator-windows-<mode>.zip -> unzip
+#      -> double-click MangaTranslator.exe.
+# =====================================================================
+name: Build Windows .exe
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "main.py"
+      - "config.py"
+      - "core/**"
+      - "gui/**"
+      - "assets/**"
+      - "requirements.txt"
+      - "build_helper.py"
+      - "build_windows.bat"
+      - "manga_translator.spec"
+      - ".github/workflows/build-windows.yml"
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Build mode"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - full   # bundles manga-ocr + EasyOCR + torch (~2.5GB exe, offline)
+          - lite   # ~190MB exe, no OCR bundled
+          - dir    # portable folder (faster startup), OCR bundled
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip downloads (torch is huge)
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache EasyOCR models (~/.EasyOCR)
+        id: cache-easyocr
+        uses: actions/cache@v4
+        with:
+          path: ~\.EasyOCR
+          key: ${{ runner.os }}-easyocr-models-v1
+
+      - name: Cache HuggingFace models (manga-ocr weights)
+        uses: actions/cache@v4
+        with:
+          path: ~\.cache\huggingface
+          key: ${{ runner.os }}-hf-manga-ocr-v1
+
+      - name: Install dependencies
+        shell: cmd
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller flet flet-cli
+
+      - name: Warm up EasyOCR model cache (offline portability)
+        # Pre-download the EasyOCR detection models so they get bundled into
+        # the .exe and the user needs NO internet on first run.  Done in
+        # Python (shell: bash) to avoid any CMD quoting issues.
+        shell: bash
+        run: |
+          echo "Pre-downloading EasyOCR models..."
+          python -c "import easyocr, numpy as np; r=easyocr.Reader(['en'], gpu=False); r.readtext(np.zeros((10,10,3), dtype=np.uint8))" || true
+          python -c "import easyocr, numpy as np; r=easyocr.Reader(['ja','en'], gpu=False); r.readtext(np.zeros((10,10,3), dtype=np.uint8))" || true
+          echo "EasyOCR models cached."
+
+      - name: Warm up manga-ocr model (offline portability)
+        shell: bash
+        run: |
+          echo "Pre-downloading manga-ocr model..."
+          python -c "from manga_ocr import MangaOcr; MangaOcr()" || true
+          echo "manga-ocr model cached."
+
+      - name: Ensure fonts + icon exist
+        shell: bash
+        run: |
+          if [ ! -f assets/fonts/VarelaRound-Regular.ttf ]; then
+            bash assets/fonts/download_font.sh || true
+          fi
+          if [ ! -f assets/icon.ico ]; then
+            python generate_icon.py
+          fi
+
+      - name: Determine build mode
+        id: mode
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.mode }}" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          else
+            # On push/PR: use lite for speed (re-run manually for full).
+            echo "mode=lite" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the .exe (Python helper -> flet pack)
+        # build_helper.py constructs the argv list in Python (no CMD quoting
+        # issues) and runs `flet pack` via subprocess.  shell: cmd keeps the
+        # default Windows shell so build_windows.bat's PATH lookups work.
+        shell: cmd
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: python build_helper.py "%MODE%"
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          $mode = "${{ steps.mode.outputs.mode }}"
+          if ($mode -eq "dir") {
+            Compress-Archive -Path dist\MangaTranslator\* -DestinationPath MangaTranslator-windows.zip
+          } else {
+            Compress-Archive -Path dist\MangaTranslator.exe -DestinationPath MangaTranslator-windows.zip
+          }
+          Write-Host "Built mode=$mode"
+          if (Test-Path dist) { Get-ChildItem -Recurse dist | Select-Object FullName, Length }
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MangaTranslator-windows-${{ steps.mode.outputs.mode }}
+          path: MangaTranslator-windows.zip
+          retention-days: 30
+
+      - name: (full only) Create release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'full' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: MangaTranslator v1.0.${{ github.run_number }}
+          files: MangaTranslator-windows.zip
+          generate_release_notes: true
