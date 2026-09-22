@@ -1,0 +1,46 @@
+# =============================================================
+# Manga Translator (JP/EN -> Hebrew) - requirements.txt
+# =============================================================
+# Tested with Python 3.10 / 3.11 / 3.12
+# Install:  pip install -r requirements.txt
+#
+# NOTE on PyTorch: the CPU-only wheel index is added below so you get the
+# smaller CPU build (~200 MB) instead of the full CUDA build (~2 GB).
+# Remove the extra-index-url line if you have a CUDA GPU and want GPU OCR.
+# =============================================================
+
+# --- GUI ---
+flet>=0.23.0
+
+# --- Image processing ---
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# --- PyTorch (CPU-only, shared by manga-ocr and easyocr) ---
+# Pin the CPU index BEFORE torch so the CPU wheels are chosen.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchvision>=0.15.0
+
+# --- OCR engines (both bundled; the unified engine routes by source lang) ---
+# manga-ocr: specifically trained on Japanese manga text - best for `ja`.
+manga-ocr>=0.1.11
+transformers>=4.30.0            # required by manga-ocr
+tokenizers>=0.13.0
+huggingface_hub>=0.16.0
+safetensors>=0.3.0
+
+# EasyOCR: used for `en` and `auto` (ja+en single pass).  Also pulls scipy +
+# scikit-image + PyTorch (already required above).
+easyocr>=1.7.0
+scipy>=1.10.0
+scikit-image>=0.20.0
+
+# --- Translation ---
+deep-translator>=1.11.0        # GoogleTranslator + MyMemory fallback
+
+# --- Hebrew RTL support (CRITICAL) ---
+# Without these two packages Hebrew is rendered backwards on the image.
+python-bidi>=0.4.2
+arabic-reshaper>=3.0.0
