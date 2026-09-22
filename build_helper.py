@@ -17,20 +17,17 @@ logger = logging.getLogger("MangaBuilder")
 class MangaTranslatorBuilder:
     def __init__(self, mode="full"):
         self.mode = mode
-        # שימוש ב-pathlib לניהול נתיבים בטוח בכל מערכות ההפעלה
         self.root_dir = Path(__file__).parent.resolve()
         self.dist_dir = self.root_dir / "dist"
         self.build_dir = self.root_dir / "build"
         self.assets_dir = self.root_dir / "assets"
         
-        # ספריות שחייבים לייבא באופן סמוי כדי למנוע קריסות של התוכנה
         self.hidden_imports = [
             "bidi",
             "deep_translator",
             "arabic_reshaper"
         ]
         
-        # ספריות כבדות שחייבים לאסוף עבורן את כל התלויות והמודלים (AI, OCR)
         self.collect_all_modules = [
             "manga_ocr", "transformers", "tokenizers", "huggingface_hub",
             "safetensors", "easyocr", "scipy", "skimage", "torch", "torchvision", "flet_web"
@@ -68,19 +65,28 @@ class MangaTranslatorBuilder:
         logger.warning("EasyOCR models not found in default directory. Will build without them.")
         return None
 
-    def construct_command(self):
-        """בונה את הפקודה המדויקת וההרמטית ל-flet pack"""
-        logger.info("Constructing robust flet pack command...")
+    def get_flet_command(self):
+        """מוצא את פקודת ההרצה הנכונה ל-Flet CLI"""
+        flet_bin = shutil.which("flet")
+        if flet_bin:
+            logger.info(f"Using flet executable: {flet_bin}")
+            return [flet_bin, "pack"]
         
-        # 1. פקודת הבסיס ל-Flet
-        cmd = [
-            sys.executable, "-m", "flet", "pack", "main.py",
+        logger.info("flet executable not found in PATH, falling back to python -m flet_cli")
+        return [sys.executable, "-m", "flet_cli", "pack"]
+
+    def construct_command(self):
+        """בונה את הפקודה המדויקת ל-flet pack"""
+        logger.info("Constructing flet pack command...")
+        
+        cmd = self.get_flet_command()
+        cmd.extend([
+            "main.py",
             "-i", str(self.assets_dir / "icon.ico"),
             "-n", "MangaTranslator",
             "--distpath", str(self.dist_dir),
-        ]
+        ])
         
-        # 2. הוספת תיקיות מידע (Data) באופן שתואם גם לווינדוס וגם ללינוקס
         sep = os.pathsep
         data_folders = [
             (str(self.assets_dir / "fonts"), "assets/fonts"),
@@ -95,7 +101,6 @@ class MangaTranslatorBuilder:
         for src, dst in data_folders:
             cmd.extend(["--add-data", f"{src}{sep}{dst}"])
 
-        # 3. בניית מחרוזת הפרמטרים עבור PyInstaller
         pyinstaller_args_list = []
         for hi in self.hidden_imports:
             pyinstaller_args_list.append(f"--hidden-import {hi}")
@@ -103,10 +108,8 @@ class MangaTranslatorBuilder:
         for mod in self.collect_all_modules:
             pyinstaller_args_list.append(f"--collect-all {mod}")
             
-        # איחוד כל הדגלים למחרוזת טקסט אחת עם רווחים - הדרך היחידה שבה Flet מקבל את זה בלי לקרוס
         pyinstaller_args_str = " ".join(pyinstaller_args_list)
         
-        # הכנסת המחרוזת לפקודה המקורית
         cmd.extend(["--pyinstaller-build-args", pyinstaller_args_str])
         
         return cmd
@@ -127,7 +130,6 @@ class MangaTranslatorBuilder:
         start_time = time.time()
         
         try:
-            # הרצת הפקודה תוך כדי הדפסת הפלט בזמן אמת (Stream)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -137,7 +139,6 @@ class MangaTranslatorBuilder:
                 universal_newlines=True
             )
             
-            # קריאת הלוגים מ-PyInstaller והדפסתם כדי שלא ננחש איפה הוא נתקע
             for line in process.stdout:
                 print(line, end="")
                 
@@ -172,7 +173,6 @@ def main():
     print("\n" + "="*70)
     logger.info("Initializing Advanced Manga Translator Build Manager...")
     
-    # קביעת מוד הבנייה מהפקודה (או default ל-full)
     mode = sys.argv[1].lower() if len(sys.argv) > 1 else "full"
     logger.info(f"Selected Build Mode: {mode.upper()}")
     
