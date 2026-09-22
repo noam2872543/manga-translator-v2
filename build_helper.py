@@ -76,7 +76,7 @@ class MangaTranslatorBuilder:
         return [sys.executable, "-m", "flet_cli", "pack"]
 
     def construct_command(self):
-        """בונה את הפקודה המדויקת ל-flet pack"""
+        """בונה את הפקודה המדויקת ל-flet pack עם הפרדת ארגומנטים הרמטית"""
         logger.info("Constructing flet pack command...")
         
         cmd = self.get_flet_command()
@@ -101,16 +101,14 @@ class MangaTranslatorBuilder:
         for src, dst in data_folders:
             cmd.extend(["--add-data", f"{src}{sep}{dst}"])
 
-        pyinstaller_args_list = []
+        # מעבירים כל ארגומנט בנפרד ל-flet pack כדי למנוע קבלת מחרוזת מחוברת אחת
         for hi in self.hidden_imports:
-            pyinstaller_args_list.append(f"--hidden-import {hi}")
+            cmd.extend(["--pyinstaller-build-args", "--hidden-import"])
+            cmd.extend(["--pyinstaller-build-args", hi])
             
         for mod in self.collect_all_modules:
-            pyinstaller_args_list.append(f"--collect-all {mod}")
-            
-        pyinstaller_args_str = " ".join(pyinstaller_args_list)
-        
-        cmd.extend(["--pyinstaller-build-args", pyinstaller_args_str])
+            cmd.extend(["--pyinstaller-build-args", "--collect-all"])
+            cmd.extend(["--pyinstaller-build-args", mod])
         
         return cmd
 
